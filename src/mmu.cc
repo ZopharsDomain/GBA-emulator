@@ -8,8 +8,8 @@
 #include "cpu/cpu.h"
 #include "video/video.h"
 
-MMU::MMU(Cartridge& inCartridge, CPU& inCPU, Video& inVideo, std::shared_ptr<Input> inInput, Serial& inSerial, Timer& inTimer) :
-    cartridge(inCartridge),
+MMU::MMU(std::unique_ptr<Cartridge> inCartridge, CPU& inCPU, Video& inVideo, Input& inInput, Serial& inSerial, Timer& inTimer) :
+    cartridge(std::move(inCartridge)),
     cpu(inCPU),
     video(inVideo),
     input(inInput),
@@ -24,7 +24,7 @@ u8 MMU::read(const Address& address) const {
         if (address.in_range(0x0, 0xFF) && boot_rom_active()) {
             return bootDMG[address.value()];
         }
-        return cartridge.read(address);
+        return cartridge->read(address);
     }
 
     /* VRAM */
@@ -34,8 +34,7 @@ u8 MMU::read(const Address& address) const {
 
     /* External (cartridge) RAM */
     if (address.in_range(0xA000, 0xBFFF)) {
-        log_unimplemented("Attempting to read from cartridge RAM");
-        return memory_read(address);
+        return cartridge->read(address);
     }
 
     /* Internal work RAM */
@@ -84,7 +83,7 @@ u8 MMU::memory_read(const Address& address) const {
 u8 MMU::read_io(const Address& address) const {
     switch (address.value()) {
         case 0xFF00:
-            return input->get_input();
+            return input.get_input();
 
         case 0xFF01:
             return serial.read();
@@ -108,6 +107,69 @@ u8 MMU::read_io(const Address& address) const {
         case 0xFF0F:
             return cpu.interrupt_flag.value();
 
+        /* TODO: Audio - Channel 1: Tone & Sweep */
+        case 0xFF10:
+        case 0xFF11:
+        case 0xFF12:
+        case 0xFF13:
+        case 0xFF14:
+            return 0xFF;
+
+        /* TODO: Audio - Channel 2: Tone */
+        case 0xFF16:
+        case 0xFF17:
+        case 0xFF18:
+        case 0xFF19:
+            return 0xFF;
+
+        /* TODO: Audio - Channel 3: Wave Output */
+        case 0xFF1A:
+        case 0xFF1B:
+        case 0xFF1C:
+        case 0xFF1D:
+        case 0xFF1E:
+            return 0xFF;
+
+        /* TODO: Audio - Channel 4: Noise */
+        case 0xFF20:
+        case 0xFF21:
+        case 0xFF22:
+        case 0xFF23:
+            return 0xFF;
+
+        /* TODO: Audio - Sound Control Registers */
+        case 0xFF24:
+            /* TODO */
+            /* log_unimplemented("Read from channel control address 0x%x", address.value()); */
+            return 0xFF;
+
+        case 0xFF25:
+            /* TODO */
+            return 0xFF;
+
+        case 0xFF26:
+            /* TODO */
+            return 0xFF;
+
+        /* TODO: Audio - Wave Pattern RAM */
+        case 0xFF30:
+        case 0xFF31:
+        case 0xFF32:
+        case 0xFF33:
+        case 0xFF34:
+        case 0xFF35:
+        case 0xFF36:
+        case 0xFF37:
+        case 0xFF38:
+        case 0xFF39:
+        case 0xFF3A:
+        case 0xFF3B:
+        case 0xFF3C:
+        case 0xFF3D:
+        case 0xFF3E:
+        case 0xFF3F:
+            return memory_read(address);
+
         case 0xFF40:
             return video.control_byte;
 
@@ -119,6 +181,24 @@ u8 MMU::read_io(const Address& address) const {
 
         case 0xFF44:
             return video.line.value();
+
+        case 0xFF45:
+            return video.ly_compare.value();
+
+        case 0xFF47:
+            return video.bg_palette.value();
+
+        case 0xFF48:
+            return video.sprite_palette_0.value();
+
+        case 0xFF49:
+            return video.sprite_palette_1.value();
+
+        case 0xFF4A:
+            return video.window_y.value();
+
+        case 0xFF4B:
+            return video.window_x.value();
 
         case 0xFF4D:
             log_unimplemented("Attempted to read from 'Prepare Speed Switch' register");
@@ -135,7 +215,7 @@ u8 MMU::read_io(const Address& address) const {
 
 void MMU::write(const Address& address, const u8 byte) {
     if (address.in_range(0x0000, 0x7FFF)) {
-        log_warn("Attempting to write to cartridge ROM: %04X - 0x%X", address.value(), byte);
+        cartridge->write(address, byte);
         return;
     }
 
@@ -147,7 +227,7 @@ void MMU::write(const Address& address, const u8 byte) {
 
     /* External (cartridge) RAM */
     if (address.in_range(0xA000, 0xBFFF)) {
-        memory_write(address, byte);
+        cartridge->write(address, byte);
         return;
     }
 
@@ -200,7 +280,7 @@ void MMU::write(const Address& address, const u8 byte) {
 void MMU::write_io(const Address& address, const u8 byte) {
     switch (address.value()) {
         case 0xFF00:
-            input->write(byte);
+            input.write(byte);
             return;
 
         case 0xFF01:
@@ -267,7 +347,7 @@ void MMU::write_io(const Address& address, const u8 byte) {
         /* TODO: Audio - Sound Control Registers */
         case 0xFF24:
             /* TODO */
-            log_unimplemented("Wrote to channel control address 0x%x - 0x%x", address.value(), byte);
+            /* log_unimplemented("Wrote to channel control address 0x%x - 0x%x", address.value(), byte); */
             return;
 
         case 0xFF25:
@@ -307,7 +387,7 @@ void MMU::write_io(const Address& address, const u8 byte) {
 
         case 0xFF41:
             /* TODO */
-            log_unimplemented("Wrote to LCD stat register 0x%x - 0x%x", address.value(), byte);
+            video.lcd_status.set(byte);
             return;
 
         /* Vertical Scroll Register */
@@ -323,7 +403,11 @@ void MMU::write_io(const Address& address, const u8 byte) {
         /* LY - Line Y coordinate */
         case 0xFF44:
             /* "Writing will reset the counter */
-            log_unimplemented("Writing to FF44 will reset the line counter");
+            video.line.set(0x0);
+            return;
+
+        case 0xFF45:
+            video.ly_compare.set(byte);
             return;
 
         case 0xFF46:
@@ -335,18 +419,22 @@ void MMU::write_io(const Address& address, const u8 byte) {
             log_trace("Set video palette: 0x%x", byte);
             return;
 
-        /* TODO: Object Palette 0/1 Data */
         case 0xFF48:
+            video.sprite_palette_0.set(byte);
+            log_trace("Set sprite palette 0: 0x%x", byte);
+            return;
+
         case 0xFF49:
-            log_unimplemented("Wrote to object palette data register 0x%x - 0x%x", address.value(), byte);
+            video.sprite_palette_1.set(byte);
+            log_trace("Set sprite palette 1: 0x%x", byte);
             return;
 
         case 0xFF4A:
-            log_unimplemented("Wrote to window Y position");
+            video.window_y.set(byte);
             return;
 
         case 0xFF4B:
-            log_unimplemented("Wrote to window X position");
+            video.window_x.set(byte);
             return;
 
         case 0xFF4D:

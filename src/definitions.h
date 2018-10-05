@@ -14,6 +14,7 @@ struct Noncopyable {
     Noncopyable& operator=(const Noncopyable&) = delete;
     Noncopyable(const Noncopyable&) = delete;
     Noncopyable() = default;
+    ~Noncopyable() = default;
 };
 
 #pragma clang diagnostic push
@@ -27,8 +28,9 @@ template <typename... T> void unused(T&&... unused_vars) {}
     exit(1);
 
 
-const int GAMEBOY_WIDTH = 160;
-const int GAMEBOY_HEIGHT = 144;
+const uint GAMEBOY_WIDTH = 160;
+const uint GAMEBOY_HEIGHT = 144;
+const uint BG_MAP_SIZE = 256;
 
 const int CLOCK_RATE = 4194304;
 
@@ -46,7 +48,7 @@ enum class Color {
     Black,
 };
 
-struct BGPalette {
+struct Palette {
     Color color0 = Color::White;
     Color color1 = Color::LightGray;
     Color color2 = Color::DarkGray;

@@ -1,14 +1,16 @@
 #pragma once
 
 #include "framebuffer.h"
-#include "screen.h"
 #include "tile.h"
 
 #include "../mmu.h"
 #include "../register.h"
+#include "../definitions.h"
 
 #include <vector>
 #include <memory>
+
+typedef std::function<void(const FrameBuffer&)> vblank_callback_t;
 
 enum class VideoMode {
     ACCESS_OAM,
@@ -24,13 +26,12 @@ struct TileInfo {
 
 class Video {
 public:
-    Video(std::shared_ptr<Screen> inScreen, CPU& inCPU, MMU& inMMU);
+    Video(CPU& inCPU, MMU& inMMU);
 
     void tick(Cycles cycles);
+    void register_vblank_callback(const vblank_callback_t& _vblank_callback);
 
     u8 control_byte;
-
-    /* TODO: Annotate each register with its register name */
 
     ByteRegister lcd_control;
     ByteRegister lcd_status;
@@ -46,21 +47,26 @@ public:
     ByteRegister window_x; /* Note: x - 7 */
 
     ByteRegister bg_palette;
-    ByteRegister sprite0_palette; /* OBP0 */
-    ByteRegister sprite1_palette; /* OBP1 */
+    ByteRegister sprite_palette_0; /* OBP0 */
+    ByteRegister sprite_palette_1; /* OBP1 */
 
     /* TODO: LCD Color Palettes (CGB) */
     /* TODO: LCD VRAM Bank (CGB) */
 
     ByteRegister dma_transfer; /* DMA */
 
-    /* TODO: LCD VRAM DMA Transfers */
+    bool debug_disable_background = false;
+    bool debug_disable_sprites = false;
+    bool debug_disable_window = false;
 
 private:
     void write_scanline(u8 current_line);
+    void write_sprites();
     void draw();
-    void draw_tile(uint tile_x, uint tile_y);
+    void draw_bg_line(uint current_line);
+    void draw_window_line(uint current_line);
     void draw_sprite(uint sprite_n);
+    u8 get_pixel_from_line(u8 byte1, u8 byte2, u8 pixel_index) const;
 
     bool display_enabled() const;
     bool window_tile_map() const;
@@ -74,15 +80,18 @@ private:
     TileInfo get_tile_info(Address tile_set_location, u8 tile_id, u8 tile_line) const;
 
     Color get_real_color(u8 pixel_value) const;
-    BGPalette get_bg_palette() const;
+    Palette load_palette(ByteRegister& palette_register) const;
+    Color get_color_from_palette(GBColor color, const Palette& palette);
 
-    std::shared_ptr<Screen> screen;
     CPU& cpu;
     MMU& mmu;
     FrameBuffer buffer;
+    FrameBuffer background_map;
 
-    VideoMode current_mode;
-    uint cycle_counter;
+    VideoMode current_mode = VideoMode::ACCESS_OAM;
+    uint cycle_counter = 0;
+
+    vblank_callback_t vblank_callback;
 };
 
 const uint CLOCKS_PER_HBLANK = 204; /* Mode 0 */

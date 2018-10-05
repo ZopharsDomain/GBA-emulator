@@ -9,14 +9,11 @@ addons:
     sources:
         # add PPAs with more up-to-date toolchains
         - ubuntu-toolchain-r-test
-        - llvm-toolchain-precise-3.9
-        - george-edison55-precise-backports
+        - llvm-toolchain-trusty-6.0
     packages:
-        - cmake
-        - cmake-data
-        - clang-3.9
+        - clang-6.0
         - libsfml-dev
 
 script:
-    - make --no-print-directory release
+    - make --no-print-directory release || travis_terminate 1
     - ./scripts/run_test_roms ./scripts/test_roms
