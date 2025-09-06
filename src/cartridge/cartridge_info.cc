@@ -2,7 +2,7 @@
 
 #include "../util/log.h"
 
-std::unique_ptr<CartridgeInfo> get_info(std::vector<u8> rom) {
+auto get_info(std::vector<u8> rom) -> std::unique_ptr<CartridgeInfo> {
     std::unique_ptr<CartridgeInfo> info = std::make_unique<CartridgeInfo>();
 
     u8 type_code = rom[header::cartridge_type];
@@ -20,11 +20,12 @@ std::unique_ptr<CartridgeInfo> get_info(std::vector<u8> rom) {
     log_info("Cartridge:\t\t %s", describe(info->type).c_str());
     log_info("Rom Size:\t\t %s", describe(info->rom_size).c_str());
     log_info("Ram Size:\t\t %s", describe(info->ram_size).c_str());
+    log_info("");
 
     return info;
 }
 
-CartridgeType get_type(u8 type) {
+auto get_type(u8 type) -> CartridgeType {
     switch (type) {
         case 0x00:
         case 0x08:
@@ -77,7 +78,7 @@ CartridgeType get_type(u8 type) {
     }
 }
 
-std::string describe(CartridgeType type) {
+auto describe(CartridgeType type) -> std::string {
     switch (type) {
         case CartridgeType::ROMOnly:
             return "ROM Only";
@@ -97,7 +98,7 @@ std::string describe(CartridgeType type) {
 }
 
 
-std::string get_license(u16 old_license, u16 new_license) {
+auto get_license(u16 old_license, u16 new_license) -> std::string {
     /* TODO */
     unused(old_license, new_license);
     log_error("License not implemented");
@@ -105,7 +106,7 @@ std::string get_license(u16 old_license, u16 new_license) {
 }
 
 
-ROMSize get_rom_size(u8 size_code) {
+auto get_rom_size(u8 size_code) -> ROMSize {
     switch (size_code) {
         case 0x00:
             return ROMSize::KB32;
@@ -135,7 +136,7 @@ ROMSize get_rom_size(u8 size_code) {
     }
 }
 
-std::string describe(ROMSize size) {
+auto describe(ROMSize size) -> std::string {
     switch (size) {
         case ROMSize::KB32:
             return "32KB (no ROM banking)";
@@ -163,7 +164,7 @@ std::string describe(ROMSize size) {
 }
 
 
-RAMSize get_ram_size(u8 size_code) {
+auto get_ram_size(u8 size_code) -> RAMSize {
     switch (size_code) {
         case 0x00:
             return RAMSize::None;
@@ -183,7 +184,7 @@ RAMSize get_ram_size(u8 size_code) {
     }
 }
 
-uint get_actual_ram_size(RAMSize size) {
+auto get_actual_ram_size(RAMSize size) -> uint {
     switch (size) {
         case RAMSize::None:
             return 0x0;
@@ -200,7 +201,7 @@ uint get_actual_ram_size(RAMSize size) {
     }
 }
 
-std::string describe(RAMSize size) {
+auto describe(RAMSize size) -> std::string {
     switch (size) {
         case RAMSize::None:
             return "No RAM";
@@ -218,7 +219,7 @@ std::string describe(RAMSize size) {
 }
 
 
-Destination get_destination(u8 destination) {
+auto get_destination(u8 destination) -> Destination {
     switch (destination) {
         case 0x00:
             return Destination::Japanese;
@@ -230,7 +231,7 @@ Destination get_destination(u8 destination) {
     }
 }
 
-std::string describe(Destination destination) {
+auto describe(Destination destination) -> std::string {
     switch (destination) {
         case Destination::Japanese:
             return "Japanese";
@@ -239,7 +240,7 @@ std::string describe(Destination destination) {
     }
 }
 
-std::string get_title(std::vector<u8>& rom) {
+auto get_title(std::vector<u8>& rom) -> std::string {
     char name[TITLE_LENGTH] = {0};
 
     for (u8 i = 0; i < TITLE_LENGTH; i++) {

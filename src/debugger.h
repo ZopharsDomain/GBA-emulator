@@ -1,6 +1,7 @@
 #pragma once
 
 #include "definitions.h"
+#include "options.h"
 
 #include <string>
 #include <vector>
@@ -40,37 +41,40 @@ struct Command {
 
 class Debugger {
 public:
-    Debugger(Gameboy& inGameboy, bool should_debug);
+    Debugger(Gameboy& inGameboy, Options& inOptions);
 
+    void set_enabled(bool enabled);
     void cycle();
 
 private:
     Gameboy& gameboy;
+    Options& options;
+
     Command last_command;
 
-    Command get_command();
+    auto get_command() -> Command;
 
-    bool execute(Command command);
+    auto execute(const Command& command) -> bool;
 
     /* Commands */
-    bool command_step(Args args);
+    auto command_step(Args args) -> bool;
 
-    void command_registers(Args args);
-    void command_flags(Args args);
+    void command_registers(const Args& args);
+    void command_flags(const Args& args);
     void command_memory(Args args);
     void command_memory_cell(Args args);
 
     void command_breakaddr(Args args);
     void command_breakvalue(Args args);
 
-    void command_log(Args args);
+    static void command_log(Args args);
 
-    void command_steps(Args args);
-    void command_exit(Args args);
-    void command_help(Args args);
+    void command_steps(const Args& args) const;
+    static void command_exit(const Args& args);
+    static void command_help(const Args& args);
 
-    Command parse(std::string input);
-    CommandType parse_command(std::string cmd);
+    auto parse(const std::string& input) -> Command;
+    static auto parse_command(std::string cmd) -> CommandType;
 
     bool enabled;
 

@@ -1,42 +1,40 @@
 #pragma once
 
 #include "address.h"
+#include "options.h"
 #include "cartridge/cartridge.h"
 
 #include <vector>
 #include <memory>
 
-class Video;
-class CPU;
-class Serial;
-class Input;
-class Timer;
+class Gameboy;
 
 class MMU {
 public:
-    MMU(std::unique_ptr<Cartridge> inCartridge, CPU& inCPU, Video& inVideo, Input& input, Serial& serial, Timer& timer);
+    MMU(Gameboy& inGb, Options& options);
 
-    u8 read(const Address& address) const;
+    auto read(const Address& address) const -> u8;
     void write(const Address& address, u8 byte);
 
 private:
-    bool boot_rom_active() const;
+    auto boot_rom_active() const -> bool;
 
-    u8 read_io(const Address& address) const;
+    auto read_io(const Address& address) const -> u8;
     void write_io(const Address& address, u8 byte);
 
-    u8 memory_read(const Address& address) const;
-    void memory_write(const Address& address, u8 byte);
+    auto unmapped_io_read(const Address& address) const -> u8;
+    void unmapped_io_write(const Address& address, u8 byte);
 
-    void dma_transfer(const u8 byte);
+    void dma_transfer(u8 byte);
 
-    std::unique_ptr<Cartridge> cartridge;
-    CPU& cpu;
-    Video& video;
-    Input& input;
-    Serial& serial;
-    Timer& timer;
-    std::vector<u8> memory;
+    Gameboy& gb;
+    Options& options;
+
+    std::vector<u8> work_ram;
+    std::vector<u8> oam_ram;
+    std::vector<u8> high_ram;
+
+    ByteRegister disable_boot_rom_switch;
 
     friend class Debugger;
 };

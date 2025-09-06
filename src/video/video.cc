@@ -1,6 +1,7 @@
 #include "video.h"
 
 #include "color.h"
+#include "../gameboy.h"
 #include "../cpu/cpu.h"
 
 #include "../util/bitwise.h"
@@ -8,12 +9,20 @@
 
 using bitwise::check_bit;
 
-Video::Video(CPU& inCPU, MMU& inMMU) :
-    cpu(inCPU),
-    mmu(inMMU),
+Video::Video(Gameboy& inGb, Options& inOptions) :
+    gb(inGb),
     buffer(GAMEBOY_WIDTH, GAMEBOY_HEIGHT),
     background_map(BG_MAP_SIZE, BG_MAP_SIZE)
 {
+    video_ram = std::vector<u8>(0x4000);
+}
+
+u8 Video::read(const Address& address) {
+    return video_ram.at(address.value());
+}
+
+void Video::write(const Address& address, u8 value) {
+    video_ram.at(address.value()) = value;
 }
 
 void Video::tick(Cycles cycles) {
@@ -23,8 +32,8 @@ void Video::tick(Cycles cycles) {
         case VideoMode::ACCESS_OAM:
             if (cycle_counter >= CLOCKS_PER_SCANLINE_OAM) {
                 cycle_counter = cycle_counter % CLOCKS_PER_SCANLINE_OAM;
-                lcd_status.set_bit_to(1, 1);
-                lcd_status.set_bit_to(0, 1);
+                lcd_status.set_bit_to(1, true);
+                lcd_status.set_bit_to(0, true);
                 current_mode = VideoMode::ACCESS_VRAM;
             }
             break;
@@ -36,18 +45,18 @@ void Video::tick(Cycles cycles) {
                 bool hblank_interrupt = bitwise::check_bit(lcd_status.value(), 3);
 
                 if (hblank_interrupt) {
-                    cpu.interrupt_flag.set_bit_to(1, true);
+                    gb.cpu.interrupt_flag.set_bit_to(1, true);
                 }
 
                 bool ly_coincidence_interrupt = bitwise::check_bit(lcd_status.value(), 6);
                 bool ly_coincidence = ly_compare.value() == line.value();
                 if (ly_coincidence_interrupt && ly_coincidence) {
-                    cpu.interrupt_flag.set_bit_to(1, true);
+                    gb.cpu.interrupt_flag.set_bit_to(1, true);
                 }
                 lcd_status.set_bit_to(2, ly_coincidence);
 
-                lcd_status.set_bit_to(1, 0);
-                lcd_status.set_bit_to(0, 0);
+                lcd_status.set_bit_to(1, false);
+                lcd_status.set_bit_to(0, false);
             }
             break;
         case VideoMode::HBLANK:
@@ -61,12 +70,12 @@ void Video::tick(Cycles cycles) {
                 /* Line 145 (index 144) is the first line of VBLANK */
                 if (line == 144) {
                     current_mode = VideoMode::VBLANK;
-                    lcd_status.set_bit_to(1, 0);
-                    lcd_status.set_bit_to(0, 1);
-                    cpu.interrupt_flag.set_bit_to(0, true);
+                    lcd_status.set_bit_to(1, false);
+                    lcd_status.set_bit_to(0, true);
+                    gb.cpu.interrupt_flag.set_bit_to(0, true);
                 } else {
-                    lcd_status.set_bit_to(1, 1);
-                    lcd_status.set_bit_to(0, 0);
+                    lcd_status.set_bit_to(1, true);
+                    lcd_status.set_bit_to(0, false);
                     current_mode = VideoMode::ACCESS_OAM;
                 }
             }
@@ -84,24 +93,22 @@ void Video::tick(Cycles cycles) {
                     buffer.reset();
                     line.reset();
                     current_mode = VideoMode::ACCESS_OAM;
-                    lcd_status.set_bit_to(1, 1);
-                    lcd_status.set_bit_to(0, 0);
+                    lcd_status.set_bit_to(1, true);
+                    lcd_status.set_bit_to(0, false);
                 };
             }
             break;
-        default:
-            fatal_error("Invalid video mode");
     }
 }
 
-bool Video::display_enabled() const { return check_bit(control_byte, 7); }
-bool Video::window_tile_map() const { return check_bit(control_byte, 6); }
-bool Video::window_enabled() const { return check_bit(control_byte, 5); }
-bool Video::bg_window_tile_data() const { return check_bit(control_byte, 4); }
-bool Video::bg_tile_map_display() const { return check_bit(control_byte, 3); }
-bool Video::sprite_size() const { return check_bit(control_byte, 2); }
-bool Video::sprites_enabled() const { return check_bit(control_byte, 1); }
-bool Video::bg_enabled() const { return check_bit(control_byte, 0); }
+auto Video::display_enabled() const -> bool { return check_bit(control_byte, 7); }
+auto Video::window_tile_map() const -> bool { return check_bit(control_byte, 6); }
+auto Video::window_enabled() const -> bool { return check_bit(control_byte, 5); }
+auto Video::bg_window_tile_data() const -> bool { return check_bit(control_byte, 4); }
+auto Video::bg_tile_map_display() const -> bool { return check_bit(control_byte, 3); }
+auto Video::sprite_size() const -> bool { return check_bit(control_byte, 2); }
+auto Video::sprites_enabled() const -> bool { return check_bit(control_byte, 1); }
+auto Video::bg_enabled() const -> bool { return check_bit(control_byte, 0); }
 
 void Video::write_scanline(u8 current_line) {
     if (!display_enabled()) { return; }
@@ -116,7 +123,7 @@ void Video::write_scanline(u8 current_line) {
 }
 
 void Video::write_sprites() {
-    if (debug_disable_sprites) { return; }
+    if (!sprites_enabled() || debug_disable_sprites) { return; }
 
     for (uint sprite_n = 0; sprite_n < 40; sprite_n++) {
         draw_sprite(sprite_n);
@@ -125,117 +132,138 @@ void Video::write_sprites() {
 
 void Video::draw_bg_line(uint current_line) {
     /* Note: tileset two uses signed numbering to share half the tiles with tileset 1 */
-    bool tile_set_zero = bg_window_tile_data();
-    bool tile_map_zero = !bg_tile_map_display();
+    bool use_tile_set_zero = bg_window_tile_data();
+    bool use_tile_map_zero = !bg_tile_map_display();
 
     Palette palette = load_palette(bg_palette);
 
-    Address tile_set_location = tile_set_zero
-        ? TILE_SET_ZERO_LOCATION
-        : TILE_SET_ONE_LOCATION;
+    Address tile_set_address = use_tile_set_zero
+        ? TILE_SET_ZERO_ADDRESS
+        : TILE_SET_ONE_ADDRESS;
 
-    Address tile_map_location = tile_map_zero
-        ? TILE_MAP_ZERO_LOCATION
-        : TILE_MAP_ONE_LOCATION;
+    Address tile_map_address = use_tile_map_zero
+        ? TILE_MAP_ZERO_ADDRESS
+        : TILE_MAP_ONE_ADDRESS;
 
-    for (uint x = 0; x < GAMEBOY_WIDTH; x++) {
-        /* Work out the index of the pixel in the framebuffer */
-        uint x_in_bg_map = (scroll_x.value() + x) % BG_MAP_SIZE;
-        uint y_in_bg_map = (scroll_y.value() + current_line) % BG_MAP_SIZE;
+    /* The pixel row we're drawing on the screen is constant since we're only
+     * drawing a single line */
+    uint screen_y = current_line;
 
-        /* Work out the tile for this pixel */
-        uint tile_x = x_in_bg_map / TILE_WIDTH_PX;
-        uint tile_y = y_in_bg_map / TILE_HEIGHT_PX;
+    for (uint screen_x = 0; screen_x < GAMEBOY_WIDTH; screen_x++) {
+        /* Work out the position of the pixel in the framebuffer */
+        uint scrolled_x = screen_x + scroll_x.value();
+        uint scrolled_y = screen_y + scroll_y.value();
 
-        uint x_in_tile = x_in_bg_map % TILE_WIDTH_PX;
-        uint y_in_tile = y_in_bg_map % TILE_HEIGHT_PX;
+        /* Work out the index of the pixel in the full background map */
+        uint bg_map_x = scrolled_x % BG_MAP_SIZE;
+        uint by_map_y = scrolled_y % BG_MAP_SIZE;
 
-        /* Work out the index of the tile in the array of all tiles */
-        uint tile_index = tile_y * TILES_PER_LINE + tile_x;
+        /* Work out which tile of the bg_map this pixel is in, and the index of that tile
+         * in the array of all tiles */
+        uint tile_x = bg_map_x / TILE_WIDTH_PX;
+        uint tile_y = by_map_y / TILE_HEIGHT_PX;
+
+        /* Work out which specific (x,y) inside that tile we're going to render */
+        uint tile_pixel_x = bg_map_x % TILE_WIDTH_PX;
+        uint tile_pixel_y = by_map_y % TILE_HEIGHT_PX;
 
         /* Work out the address of the tile ID from the tile map */
-        Address tile_id_address = tile_map_location + tile_index;
+        uint tile_index = tile_y * TILES_PER_LINE + tile_x;
+        Address tile_id_address = tile_map_address + tile_index;
 
-        /* Grab the tile number from the tile map */
-        u8 tile_id = mmu.read(tile_id_address);
+        /* Grab the ID of the tile we'll get data from in the tile map */
+        u8 tile_id = gb.mmu.read(tile_id_address);
 
-        uint tile_offset = tile_set_zero
+        /* Calculate the offset from the start of the tile data memory where
+         * the data for our tile lives */
+        uint tile_data_mem_offset = use_tile_set_zero
             ? tile_id * TILE_BYTES
             : (static_cast<s8>(tile_id) + 128) * TILE_BYTES;
 
-        /* 2 (bytes per line of pixels) * y (lines) */
-        uint index_into_tile = y_in_tile * 2;
+        /* Calculate the extra offset to the data for the line of pixels we
+         * are rendering from.
+         * 2 (bytes per line of pixels) * y (lines) */
+        uint tile_data_line_offset = tile_pixel_y * 2;
 
-        Address tile_start = tile_set_location + tile_offset;
-        Address tile_line_start = tile_set_location + tile_offset + index_into_tile;
+        Address tile_line_data_start_address = tile_set_address + tile_data_mem_offset + tile_data_line_offset;
 
-        u8 pixels_1 = mmu.read(tile_line_start);
-        u8 pixels_2 = mmu.read(tile_line_start + 1);
+        /* FIXME: We fetch the full line of pixels for each pixel in the tile
+         * we render. This could be altered to work in a way that avoids re-fetching
+         * for a more performant renderer */
+        u8 pixels_1 = gb.mmu.read(tile_line_data_start_address);
+        u8 pixels_2 = gb.mmu.read(tile_line_data_start_address + 1);
 
-        GBColor gb_color = get_color(get_pixel_from_line(pixels_1, pixels_2, x_in_tile));
+        GBColor pixel_color = get_pixel_from_line(pixels_1, pixels_2, tile_pixel_x);
+        Color screen_color = get_color_from_palette(pixel_color, palette);
 
-        Color screen_color = get_color_from_palette(gb_color, palette);
-
-        buffer.set_pixel(x, current_line, screen_color);
+        buffer.set_pixel(screen_x, screen_y, screen_color);
     }
 }
 
 void Video::draw_window_line(uint current_line) {
     /* Note: tileset two uses signed numbering to share half the tiles with tileset 1 */
-    bool tile_set_zero = bg_window_tile_data();
-    bool tile_map_zero = !window_tile_map();
+    bool use_tile_set_zero = bg_window_tile_data();
+    bool use_tile_map_zero = !window_tile_map();
 
     Palette palette = load_palette(bg_palette);
 
-    Address tile_set_location = tile_set_zero
-        ? TILE_SET_ZERO_LOCATION
-        : TILE_SET_ONE_LOCATION;
+    Address tile_set_address = use_tile_set_zero
+        ? TILE_SET_ZERO_ADDRESS
+        : TILE_SET_ONE_ADDRESS;
 
-    Address tile_map_location = tile_map_zero
-        ? TILE_MAP_ZERO_LOCATION
-        : TILE_MAP_ONE_LOCATION;
+    Address tile_map_address = use_tile_map_zero
+        ? TILE_MAP_ZERO_ADDRESS
+        : TILE_MAP_ONE_ADDRESS;
 
-    uint y_in_screen = current_line - window_y.value();
-    if (y_in_screen > GAMEBOY_HEIGHT) { return; }
+    uint screen_y = current_line;
+    uint scrolled_y = screen_y - window_y.value();
 
-    for (uint x = 0; x < GAMEBOY_WIDTH; x++) {
-        /* Work out the index of the pixel in the framebuffer */
-        uint x_in_screen = window_x.value() + x - 7;
+    if (scrolled_y >= GAMEBOY_HEIGHT) { return; }
+    // if (!is_on_screen_y(scrolled_y)) { return; }
 
-        /* Work out the tile for this pixel */
-        uint tile_x = x_in_screen / TILE_WIDTH_PX;
-        uint tile_y = y_in_screen / TILE_HEIGHT_PX;
+    for (uint screen_x = 0; screen_x < GAMEBOY_WIDTH; screen_x++) {
+        /* Work out the position of the pixel in the framebuffer */
+        uint scrolled_x = screen_x + window_x.value() - 7;
 
-        uint x_in_tile = x_in_screen % TILE_WIDTH_PX;
-        uint y_in_tile = y_in_screen % TILE_HEIGHT_PX;
+        /* Work out which tile of the bg_map this pixel is in, and the index of that tile
+         * in the array of all tiles */
+        uint tile_x = scrolled_x / TILE_WIDTH_PX;
+        uint tile_y = scrolled_y / TILE_HEIGHT_PX;
 
-        /* Work out the index of the tile in the array of all tiles */
-        uint tile_index = tile_y * TILES_PER_LINE + tile_x;
+        /* Work out which specific (x,y) inside that tile we're going to render */
+        uint tile_pixel_x = scrolled_x % TILE_WIDTH_PX;
+        uint tile_pixel_y = scrolled_y % TILE_HEIGHT_PX;
 
         /* Work out the address of the tile ID from the tile map */
-        Address tile_id_address = tile_map_location + tile_index;
+        uint tile_index = tile_y * TILES_PER_LINE + tile_x;
+        Address tile_id_address = tile_map_address + tile_index;
 
-        /* Grab the tile number from the tile map */
-        u8 tile_id = mmu.read(tile_id_address);
+        /* Grab the ID of the tile we'll get data from in the tile map */
+        u8 tile_id = gb.mmu.read(tile_id_address);
 
-        uint tile_offset = tile_set_zero
+        /* Calculate the offset from the start of the tile data memory where
+         * the data for our tile lives */
+        uint tile_data_mem_offset = use_tile_set_zero
             ? tile_id * TILE_BYTES
             : (static_cast<s8>(tile_id) + 128) * TILE_BYTES;
 
-        /* 2 (bytes per line of pixels) * y (lines) */
-        uint index_into_tile = y_in_tile * 2;
+        /* Calculate the extra offset to the data for the line of pixels we
+         * are rendering from.
+         * 2 (bytes per line of pixels) * y (lines) */
+        uint tile_data_line_offset = tile_pixel_y * 2;
 
-        Address tile_start = tile_set_location + tile_offset;
-        Address tile_line_start = tile_set_location + tile_offset + index_into_tile;
+        Address tile_line_data_start_address = tile_set_address + tile_data_mem_offset + tile_data_line_offset;
 
-        u8 pixels_1 = mmu.read(tile_line_start);
-        u8 pixels_2 = mmu.read(tile_line_start + 1);
+        /* FIXME: We fetch the full line of pixels for each pixel in the tile
+         * we render. This could be altered to work in a way that avoids re-fetching
+         * for a more performant renderer */
+        u8 pixels_1 = gb.mmu.read(tile_line_data_start_address);
+        u8 pixels_2 = gb.mmu.read(tile_line_data_start_address + 1);
 
-        GBColor gb_color = get_color(get_pixel_from_line(pixels_1, pixels_2, x_in_tile));
+        GBColor pixel_color = get_pixel_from_line(pixels_1, pixels_2, tile_pixel_x);
+        Color screen_color = get_color_from_palette(pixel_color, palette);
 
-        Color screen_color = get_color_from_palette(gb_color, palette);
-
-        buffer.set_pixel(x, current_line, screen_color);
+        buffer.set_pixel(screen_x, screen_y, screen_color);
     }
 }
 
@@ -246,8 +274,8 @@ void Video::draw_sprite(const uint sprite_n) {
     Address offset_in_oam = sprite_n * SPRITE_BYTES;
 
     Address oam_start = 0xFE00 + offset_in_oam.value();
-    u8 sprite_y = mmu.read(oam_start);
-    u8 sprite_x = mmu.read(oam_start + 1);
+    u8 sprite_y = gb.mmu.read(oam_start);
+    u8 sprite_x = gb.mmu.read(oam_start + 1);
 
     /* If the sprite would be drawn offscreen, don't draw it */
     if (sprite_y == 0 || sprite_y >= 160) { return; }
@@ -257,10 +285,10 @@ void Video::draw_sprite(const uint sprite_n) {
         ? 2 : 1;
 
     /* Sprites are always taken from the first tileset */
-    Address tile_set_location = TILE_SET_ZERO_LOCATION;
+    Address tile_set_location = TILE_SET_ZERO_ADDRESS;
 
-    u8 pattern_n = mmu.read(oam_start + 2);
-    u8 sprite_attrs = mmu.read(oam_start + 3);
+    u8 pattern_n = gb.mmu.read(oam_start + 2);
+    u8 sprite_attrs = gb.mmu.read(oam_start + 3);
 
     /* Bits 0-3 are used only for CGB */
     bool use_palette_1 = check_bit(sprite_attrs, 4);
@@ -276,7 +304,7 @@ void Video::draw_sprite(const uint sprite_n) {
 
     Address pattern_address = tile_set_location + tile_offset;
 
-    Tile tile(pattern_address, mmu, sprite_size_multiplier);
+    Tile tile(pattern_address, gb.mmu, sprite_size_multiplier);
     int start_y = sprite_y - 16;
     int start_x = sprite_x - 8;
 
@@ -290,26 +318,39 @@ void Video::draw_sprite(const uint sprite_n) {
             // Color 0 is transparent
             if (gb_color == GBColor::Color0) { continue; }
 
+            int screen_x = start_x + x;
+            int screen_y = start_y + y;
+
+            if (!is_on_screen(screen_x, screen_y)) { continue; }
+
+            auto existing_pixel = buffer.get_pixel(screen_x, screen_y);
+
+            // FIXME: We need to see if the color we're writing over is
+            // logically Color0, rather than looking at the color after
+            // the current palette has been applied
+            if (obj_behind_bg && existing_pixel != Color::White) { continue; }
+
             Color screen_color = get_color_from_palette(gb_color, palette);
 
-            int pixel_x = start_x + x;
-            int pixel_y = start_y + y;
-
-            if (pixel_x < 0 || pixel_x > GAMEBOY_WIDTH) { continue; }
-            if (pixel_y < 0 || pixel_y > GAMEBOY_HEIGHT) { continue; }
-
-            buffer.set_pixel(pixel_x, pixel_y, screen_color);
+            buffer.set_pixel(screen_x, screen_y, screen_color);
         }
     }
 }
 
-u8 Video::get_pixel_from_line(u8 byte1, u8 byte2, u8 pixel_index) const {
+auto Video::get_pixel_from_line(u8 byte1, u8 byte2, u8 pixel_index) -> GBColor {
     using bitwise::bit_value;
 
-    return static_cast<u8>((bit_value(byte2, 7-pixel_index) << 1) | bit_value(byte1, 7-pixel_index));
+    u8 color_u8 = static_cast<u8>((bit_value(byte2, 7-pixel_index) << 1) | bit_value(byte1, 7-pixel_index));
+    return get_color(color_u8);
 }
 
-Palette Video::load_palette(ByteRegister& palette_register) const {
+auto Video::is_on_screen_x(u8 x) -> bool { return x < GAMEBOY_WIDTH; }
+
+auto Video::is_on_screen_y(u8 y) -> bool { return y < GAMEBOY_HEIGHT; }
+
+auto Video::is_on_screen(u8 x, u8 y) -> bool { return is_on_screen_x(x) && is_on_screen_y(y); }
+
+auto Video::load_palette(ByteRegister& palette_register) -> Palette {
     using bitwise::compose_bits;
     using bitwise::bit_value;
 
@@ -327,7 +368,7 @@ Palette Video::load_palette(ByteRegister& palette_register) const {
     return { real_color_0, real_color_1, real_color_2, real_color_3 };
 }
 
-Color Video::get_color_from_palette(GBColor color, const Palette& palette) {
+auto Video::get_color_from_palette(GBColor color, const Palette& palette) -> Color {
     switch (color) {
         case GBColor::Color0: return palette.color0;
         case GBColor::Color1: return palette.color1;
@@ -337,7 +378,7 @@ Color Video::get_color_from_palette(GBColor color, const Palette& palette) {
 }
 
 
-Color Video::get_real_color(u8 pixel_value) const {
+auto Video::get_real_color(u8 pixel_value) -> Color {
     switch (pixel_value) {
         case 0: return Color::White;
         case 1: return Color::LightGray;

@@ -8,10 +8,16 @@
 #include <iostream>
 #include <algorithm>
 
-Debugger::Debugger(Gameboy& inGameboy, bool should_debug) :
+Debugger::Debugger(Gameboy& inGameboy, Options& inOptions) :
     gameboy(inGameboy),
-    enabled(should_debug)
+    options(inOptions),
+    enabled(inOptions.debugger)
 {
+    unused(options);
+}
+
+void Debugger::set_enabled(bool _enabled) {
+    enabled = _enabled;
 }
 
 void Debugger::cycle() {
@@ -38,7 +44,7 @@ void Debugger::cycle() {
         return;
     }
 
-    while (true) {
+    while (enabled) {
         Command cmd = get_command();
 
         bool should_continue = execute(cmd);
@@ -47,7 +53,7 @@ void Debugger::cycle() {
     }
 }
 
-bool Debugger::execute(Command command) {
+auto Debugger::execute(const Command& command) -> bool {
     switch (command.type) {
         case CommandType::Step:
             /* Note: 'Step' allows the program to break
@@ -78,7 +84,7 @@ bool Debugger::execute(Command command) {
     return false;
 }
 
-bool Debugger::command_step(Args args) {
+auto Debugger::command_step(Args args) -> bool {
     switch (args.size()) {
         case 0:
             return true;
@@ -110,7 +116,7 @@ bool Debugger::command_step(Args args) {
     }
 }
 
-void Debugger::command_registers(Args args) {
+void Debugger::command_registers(const Args& args) {
     unused(args);
 
     printf("AF: %04X\n", gameboy.cpu.af.value());
@@ -121,7 +127,7 @@ void Debugger::command_registers(Args args) {
     printf("PC: %04X\n", gameboy.cpu.pc.value());
 }
 
-void Debugger::command_flags(Args args) {
+void Debugger::command_flags(const Args& args) {
     unused(args);
 
     printf("Zero: %d\n", gameboy.cpu.f.flag_zero_value());
@@ -171,7 +177,6 @@ void Debugger::command_memory_cell(Args args) {
     u16 memory_location = static_cast<u16>(std::stoul(args[0], nullptr, 16));
 
     printf("0x%02X\n", gameboy.mmu.read(memory_location));
-    return;
 }
 
 void Debugger::command_breakaddr(Args args) {
@@ -198,7 +203,7 @@ void Debugger::command_breakvalue(Args args) {
     log_info("Breakpoint set for value 0x%02X at address 0x%04X", breakpoint_value, breakpoint_value_addr);
 }
 
-void Debugger::command_steps(Args args) {
+void Debugger::command_steps(const Args& args) const {
     unused(args);
 
     printf("Steps: %d\n", steps);
@@ -230,14 +235,14 @@ void Debugger::command_log(Args args) {
     }
 }
 
-void Debugger::command_exit(Args args) {
+void Debugger::command_exit(const Args& args) {
     unused(args);
 
     log_error("Exiting");
     exit(1);
 }
 
-void Debugger::command_help(Args args) {
+void Debugger::command_help(const Args& args) {
     unused(args);
 
     printf("\n");
@@ -260,21 +265,21 @@ void Debugger::command_help(Args args) {
     printf("\n");
 }
 
-Command Debugger::get_command() {
+auto Debugger::get_command() -> Command {
     printf("%s", PROMPT);
     std::string input_line;
     std::getline(std::cin, input_line);
     return parse(input_line);
 }
 
-Command Debugger::parse(std::string input) {
+auto Debugger::parse(const std::string& input) -> Command {
     using std::string;
     using std::vector;
 
     vector<string> elems = split(input);
 
     /* If nothing was entered, repeat the last command */
-    if (elems.size() < 1) return last_command;
+    if (elems.empty()) return last_command;
 
     string cmd = elems[0];
     CommandType cmd_type = parse_command(cmd);
@@ -286,7 +291,7 @@ Command Debugger::parse(std::string input) {
     return { cmd_type, args };
 }
 
-CommandType Debugger::parse_command(std::string cmd) {
+auto Debugger::parse_command(std::string cmd) -> CommandType {
     std::transform(cmd.begin(), cmd.end(), cmd.begin(), ::tolower);
 
     if (cmd == "step" || cmd == "s") return CommandType::Step;
